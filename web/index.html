@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="description" content="A focused DAB radio listening deck with live radio text and signal detail.">
+    <title>DAB Radio · Listening Deck</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2213%22 fill=%22%23a9d144%22/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/fonts.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="visualisations.js" defer></script>
+    <script src="mini-player.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#radio-text">Skip to radio text</a>
+    <div class="app-shell">
+      <header class="masthead">
+        <div class="brand-lockup" aria-label="DAB radio">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M5 12.5a16 16 0 0 1 22 0M9 17a10 10 0 0 1 14 0m-10 4.5a3 3 0 0 1 6 0" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              <circle cx="16" cy="25" r="1.7" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="brand-text">
+            <strong>DAB <span>RADIO</span></strong>
+            <small>LISTENING DECK</small>
+          </span>
+        </div>
+
+        <div class="masthead__receiver">
+          <span class="receiver-led" id="receiver-led" aria-hidden="true"></span>
+          <div>
+            <span class="micro-label">RECEIVER</span>
+            <span class="receiver-state" id="connection-label" role="status" aria-live="polite">CONNECTING</span>
+          </div>
+          <span class="receiver-divider" aria-hidden="true"></span>
+          <span class="receiver-hardware" id="hardware-name">—</span>
+        </div>
+
+        <button class="icon-button mini-player-launch" id="mini-player-button" type="button" aria-label="Open mini player" title="Open mini player">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="10" y="11" width="9" height="7" rx="1" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-button refresh-button" id="refresh-button" type="button" aria-label="Refresh receiver state" title="Refresh receiver state">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+            <path d="M20 11a8 8 0 0 0-14-5L4 8m0-5v5h5m-5 5a8 8 0 0 0 14 5l2-2m0 5v-5h-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </header>
+      <p id="mini-player-feedback" class="mini-player-feedback" role="status" hidden></p>
+
+      <main class="workbench">
+        <aside class="playlist-panel panel" aria-labelledby="playlist-title">
+          <div class="panel-heading playlist-heading">
+            <div>
+              <p class="panel-kicker">SERVICE LIST</p>
+              <h2 id="playlist-title">Playlist <span class="count-chip" id="station-count">—</span></h2>
+            </div>
+            <button class="scan-button" id="scan-button" type="button">
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.5v3m0 9v3m7.5-7.5h-3m-9 0h-3M15.3 4.7l-2.1 2.1m-6.4 6.4-2.1 2.1m10.6 0-2.1-2.1m-6.4-6.4L4.7 4.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span>Scan</span>
+            </button>
+          </div>
+
+          <div class="playlist-tools">
+            <label class="search-field">
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" stroke="currentColor" stroke-width="1.5"/><path d="m13 13 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <span class="visually-hidden">Search stations</span>
+              <input id="station-search" type="search" placeholder="Find a station" autocomplete="off" spellcheck="false">
+              <kbd>/</kbd>
+            </label>
+
+            <div class="playlist-filters" role="group" aria-label="Filter station playlist">
+              <button class="filter-button is-active" id="all-filter" type="button" aria-pressed="true">All services</button>
+              <button class="filter-button" id="favorites-filter" type="button" aria-pressed="false">Favourites <span id="favorite-count">0</span></button>
+            </div>
+
+            <label class="channel-picker">
+              <span>Ensemble</span>
+              <select id="channel-select" aria-label="Filter stations by ensemble">
+                <option value="all">All ensembles</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="scan-progress" id="scan-progress" hidden>
+            <div class="scan-progress__top"><span id="scan-label">Scanning</span><span class="readout" id="scan-count">—</span></div>
+            <progress id="scan-meter" max="1" value="0" aria-label="Channel scan progress"></progress>
+          </div>
+          <p class="scan-feedback" id="scan-feedback" role="status" aria-live="polite" hidden></p>
+          <p class="scan-hint">Scanning temporarily interrupts audio and may take a few minutes.</p>
+
+          <div class="playlist-scroll">
+            <ul class="station-list" id="station-list" aria-label="Available DAB services">
+              <li class="playlist-empty" id="playlist-empty">
+                <span class="empty-led" aria-hidden="true"></span>
+                <span id="playlist-message">Waiting for receiver state…</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="playlist-footer">
+            <span><span class="tiny-led" aria-hidden="true"></span><span id="service-summary">Awaiting services</span></span>
+            <span class="micro-readout" id="ensemble-summary">—</span>
+          </div>
+        </aside>
+
+        <section class="listening-column" aria-label="Listening controls and live radio text">
+          <section class="player-panel panel" aria-labelledby="current-service">
+            <div class="deck-bezel">
+              <div class="deck-topline">
+                <div class="on-air-state"><span class="on-air-led" id="on-air-led" aria-hidden="true"></span><span id="playback-state">READY</span></div>
+                <div class="tuned-ensemble"><span class="micro-label">TUNED</span><span class="readout" id="tuned-channel">—</span></div>
+              </div>
+
+              <div class="station-identity">
+                <div class="station-ident__main">
+                  <span class="micro-label">NOW RECEIVING</span>
+                  <h1 id="current-service">Waiting for receiver</h1>
+                </div>
+                <button class="favorite-current icon-button" id="current-favorite" type="button" aria-label="Add current station to favourites" aria-pressed="false" disabled>
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3.5 2.7 5.45 6.02.88-4.36 4.25 1.03 6-5.39-2.83-5.39 2.83 1.03-6L3.28 9.83l6.02-.88L12 3.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+
+              <section class="radio-text-panel" aria-labelledby="radio-text-label">
+                <div class="radio-text-panel__head">
+                  <h2 id="radio-text-label"><span class="text-signal" aria-hidden="true"></span>RADIO TEXT</h2>
+                  <span class="text-source" id="text-source">DLS · LIVE</span>
+                </div>
+                <p class="radio-text-copy" id="radio-text" aria-live="polite" aria-atomic="true">Waiting for live radio text…</p>
+                <p class="programme-line" id="programme-line"></p>
+                <p class="programme-description" id="programme-description"></p>
+                <details class="programme-guide-details"><summary>Programme guide</summary><ul id="programme-guide"></ul></details>
+              </section>
+
+              <figure class="radio-slide" id="radio-slide" hidden>
+                <img id="slide-image" width="800" height="450" alt="">
+                <figcaption id="slide-caption"></figcaption>
+              </figure>
+
+              <div class="display-readouts" aria-label="Playback readouts">
+                <div class="display-cell display-cell--time">
+                  <span class="display-label">SESSION</span>
+                  <strong class="display-digits" id="session-time">--:--</strong>
+                </div>
+                <div class="display-cell">
+                  <span class="display-label">BROADCAST</span>
+                  <strong class="display-value" id="broadcast-readout">—</strong>
+                </div>
+                <div class="display-cell">
+                  <span class="display-label">DELIVERY</span>
+                  <strong class="display-value" id="delivery-readout">—</strong>
+                </div>
+                <div class="display-cell display-cell--bitrate">
+                  <span class="display-label">BITRATE</span>
+                  <strong class="display-value" id="bitrate-readout">—</strong>
+                </div>
+              </div>
+
+              <div class="transport-row">
+                <button class="transport-button transport-button--play" id="play-button" type="button" aria-label="Play live radio">
+                  <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.8c0-.76.83-1.23 1.49-.84l11 6.63a.98.98 0 0 1 0 1.68l-11 6.63A.98.98 0 0 1 7 18.06V4.8Z"/></svg>
+                  <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.5 5.25c0-.41.34-.75.75-.75h2.5c.41 0 .75.34.75.75v13.5c0 .41-.34.75-.75.75h-2.5a.75.75 0 0 1-.75-.75V5.25Zm7 0c0-.41.34-.75.75-.75h2.5c.41 0 .75.34.75.75v13.5c0 .41-.34.75-.75.75h-2.5a.75.75 0 0 1-.75-.75V5.25Z"/></svg>
+                </button>
+                <div class="transport-copy"><strong id="transport-title">Live radio</strong><span id="transport-message">Select a service, then press play</span></div>
+                <div class="volume-control">
+                  <button class="icon-button mute-button" id="mute-button" type="button" aria-label="Mute audio" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path class="volume-wave" d="M16 9a4 4 0 0 1 0 6m2.5-8.5a7.5 7.5 0 0 1 0 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                  </button>
+                  <label class="visually-hidden" for="volume-range">Volume</label>
+                  <input id="volume-range" type="range" min="0" max="1" step="0.01" value="0.72">
+                </div>
+              </div>
+
+              <audio id="radio-audio" preload="none" playsinline></audio>
+            </div>
+          </section>
+
+          <section class="spectrum-panel panel" aria-labelledby="spectrum-title">
+            <div class="panel-heading compact-heading">
+              <div><p class="panel-kicker">LIVE FREQUENCIES</p><h2 id="spectrum-title">Spectrum</h2></div>
+              <span class="spectrum-state" id="spectrum-state">READY</span>
+            </div>
+            <div class="spectrum-display">
+              <canvas id="spectrum-canvas" aria-hidden="true"></canvas>
+              <p class="visually-hidden" id="spectrum-description">The spectrum visualizer displays live frequency data from the playing audio stream.</p>
+            </div>
+            <div class="spectrum-scale" aria-hidden="true"><span>40 Hz</span><span>800 Hz</span><span>16 kHz</span></div>
+          </section>
+
+          <section class="equalizer-panel panel" aria-labelledby="equalizer-title">
+            <div class="panel-heading compact-heading">
+              <div><p class="panel-kicker">TONE CONTROL</p><h2 id="equalizer-title">Equalizer</h2></div>
+              <div class="eq-headroom"><span>HEADROOM</span><strong id="headroom-readout">−6.0 dB</strong></div>
+            </div>
+            <div class="eq-controls">
+              <label class="eq-band"><span class="eq-band__name">LOW</span><span class="eq-band__value" id="eq-low-value">0.0 dB</span><input type="range" min="-6" max="6" step="0.5" value="0" data-eq="low" aria-label="Low frequency EQ gain"></label>
+              <label class="eq-band"><span class="eq-band__name">MID</span><span class="eq-band__value" id="eq-mid-value">0.0 dB</span><input type="range" min="-6" max="6" step="0.5" value="0" data-eq="mid" aria-label="Mid frequency EQ gain"></label>
+              <label class="eq-band"><span class="eq-band__name">HIGH</span><span class="eq-band__value" id="eq-high-value">0.0 dB</span><input type="range" min="-6" max="6" step="0.5" value="0" data-eq="high" aria-label="High frequency EQ gain"></label>
+              <button class="eq-reset" id="eq-reset" type="button">Reset EQ</button>
+            </div>
+          </section>
+
+          <details class="stats-drawer panel" id="stats-drawer">
+            <summary>
+              <span class="stats-drawer__title"><span class="stats-drawer__icon" aria-hidden="true">≋</span><span><strong>Signal &amp; stream details</strong><small>Receiver telemetry and decoded format</small></span></span>
+              <span class="drawer-state">OPEN</span>
+            </summary>
+            <div class="stats-content">
+              <section class="stats-section" aria-labelledby="broadcast-stats-title">
+                <h3 id="broadcast-stats-title">Broadcast source</h3>
+                <dl class="stats-grid">
+                  <div><dt>Broadcast codec</dt><dd id="stat-source-codec">—</dd></div>
+                  <div><dt>Browser stream codec</dt><dd id="stat-browser-codec">—</dd></div>
+                  <div><dt>Subchannel bitrate</dt><dd id="stat-bitrate">—</dd></div>
+                  <div><dt>Source sample rate</dt><dd id="stat-sample-rate">—</dd></div>
+                  <div class="stats-grid__wide"><dt>Broadcast mode</dt><dd id="stat-source-mode">—</dd></div>
+                  <div><dt>Ensemble / channel</dt><dd id="stat-channel">—</dd></div>
+                  <div><dt>Service ID</dt><dd id="stat-service-id">—</dd></div>
+                  <div><dt>Language</dt><dd id="stat-language">—</dd></div>
+                  <div><dt>Programme type</dt><dd id="stat-pty">—</dd></div>
+                  <div><dt>Signal to noise</dt><dd id="stat-snr">—</dd></div>
+                  <div><dt>Frequency correction</dt><dd id="stat-frequency-correction">—</dd></div>
+                  <div><dt>FIC CRC errors</dt><dd id="stat-fic-errors">—</dd></div>
+                  <div><dt>Last FCT0 frame</dt><dd id="stat-last-fct0">—</dd></div>
+                </dl>
+              </section>
+              <section class="stats-section" aria-labelledby="metadata-stats-title">
+                <h3 id="metadata-stats-title">Programme metadata</h3>
+                <dl class="stats-grid">
+                  <div><dt>DL+ status</dt><dd id="stat-dlplus-status">—</dd></div>
+                  <div><dt>DL+ source</dt><dd id="stat-dlplus-source">—</dd></div>
+                  <div><dt>SPI status</dt><dd id="stat-spi-status">—</dd></div>
+                  <div><dt>SPI source</dt><dd id="stat-spi-source">—</dd></div>
+                  <div><dt>Programme guide</dt><dd id="stat-spi-guide">—</dd></div>
+                </dl>
+              </section>
+              <section class="stats-section" aria-labelledby="playback-stats-title">
+                <h3 id="playback-stats-title">Browser playback</h3>
+                <dl class="stats-grid">
+                  <div><dt>Buffered ahead</dt><dd id="stat-buffer">—</dd></div>
+                  <div><dt>Buffer underruns</dt><dd id="stat-underruns">0 · this session</dd></div>
+                  <div><dt>Limiter reduction</dt><dd id="stat-limiter">—</dd></div>
+                  <div><dt>Output sample rate</dt><dd id="stat-output-rate">—</dd></div>
+                  <div><dt>Active stream clients</dt><dd id="stat-clients">—</dd></div>
+                  <div><dt>Stream bytes</dt><dd id="stat-bytes">—</dd></div>
+                  <div><dt>Reconnects</dt><dd id="stat-reconnects">—</dd></div>
+                  <div><dt>Stream errors</dt><dd id="stat-backend-errors">—</dd></div>
+                  <div><dt>Slow disconnects</dt><dd id="stat-slow-disconnects">—</dd></div>
+                  <div class="stats-grid__wide"><dt>Last stream error</dt><dd id="stat-stream-last-error">—</dd></div>
+                  <div><dt>Audio level</dt><dd id="stat-audio-level">—</dd></div>
+                  <div><dt>XPAD errors</dt><dd id="stat-xpad-errors">—</dd></div>
+                  <div><dt>Service errors</dt><dd id="stat-service-errors">—</dd></div>
+                  <div><dt>Error counters</dt><dd id="stat-error-counters">—</dd></div>
+                </dl>
+              </section>
+              <section class="stats-section components-section" aria-labelledby="components-title">
+                <h3 id="components-title">Service components</h3>
+                <ul class="component-list" id="component-list"><li>—</li></ul>
+              </section>
+              <section class="stats-section receiver-section" aria-labelledby="receiver-details-title">
+                <h3 id="receiver-details-title">Receiver</h3>
+                <dl class="stats-grid">
+                  <div><dt>Status</dt><dd id="stat-receiver-status">—</dd></div>
+                  <div><dt>Hardware</dt><dd id="stat-hardware">—</dd></div>
+                  <div><dt>Software</dt><dd id="stat-software">—</dd></div>
+                  <div><dt>Receiver gain</dt><dd id="stat-gain">—</dd></div>
+                  <div><dt>Frequencies scanned</dt><dd id="stat-scanned">—</dd></div>
+                  <div><dt>Last scan</dt><dd id="stat-scan-time">—</dd></div>
+                </dl>
+                <p class="receiver-error" id="receiver-error" hidden></p>
+              </section>
+            </div>
+          </details>
+        </section>
+      </main>
+
+      <footer class="status-footer">
+        <span><span class="footer-led" aria-hidden="true"></span><span id="footer-status">Connecting to receiver…</span></span>
+        <span class="footer-shortcuts"><kbd>Space</kbd> play / pause <i aria-hidden="true">·</i> <kbd>/</kbd> find a station</span>
+      </footer>
+    </div>
+  </body>
+</html>

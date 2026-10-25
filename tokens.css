@@ -1,0 +1,56 @@
+/* Hallmark · Winamp-inspired Workbench tokens · dark / technical / signal-lime */
+:root {
+  color-scheme: dark;
+
+  --color-canvas: oklch(15% 0.018 142);
+  --color-panel: oklch(19% 0.018 142);
+  --color-panel-raised: oklch(22% 0.02 142);
+  --color-panel-deep: oklch(12% 0.018 142);
+  --color-display: oklch(17% 0.035 132);
+  --color-ink: oklch(93% 0.012 128);
+  --color-muted: oklch(72% 0.018 135);
+  --color-dim: oklch(64% 0.018 138);
+  --color-line: oklch(31% 0.022 140);
+  --color-line-soft: oklch(26% 0.02 140);
+  --color-accent: oklch(85% 0.19 127);
+  --color-accent-ink: oklch(19% 0.045 137);
+  --color-led-green: oklch(81% 0.19 136);
+  --color-led-amber: oklch(79% 0.16 78);
+  --color-danger: oklch(68% 0.17 27);
+  --color-focus: oklch(88% 0.16 125);
+
+  --font-display: "Space Grotesk", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  --text-2xs: 0.625rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-display: clamp(1.7rem, 3vw, 2.7rem);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+  --dur-fast: 120ms;
+  --dur-mid: 200ms;
+
+  --rule-thin: 1px solid var(--color-line);
+  --rule-soft: 1px solid var(--color-line-soft);
+  --radius-sm: 0.35rem;
+  --radius-md: 0.6rem;
+  --radius-lg: 0.8rem;
+  --radius-pill: 999px;
+}

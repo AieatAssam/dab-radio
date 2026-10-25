@@ -1,0 +1,444 @@
+diff --git a/src/backend/decoder_adapter.cpp b/src/backend/decoder_adapter.cpp
+index a06046d..551f01e 100644
+--- a/src/backend/decoder_adapter.cpp
++++ b/src/backend/decoder_adapter.cpp
+@@ -142,6 +142,11 @@ void DecoderAdapter::FECInfo(int total_corr_count, bool uncorr_errors)
+ 
+ void DecoderAdapter::PADChangeDynamicLabel(const DL_STATE &dl)
+ {
++    std::vector<DLPlusTag> tags;
++    for (const auto& tag : dl.dl_plus_objects) {
++        tags.push_back({tag.content_type, DynamicLabelDecoder::ConvertDLPlusContentTypeToString(tag.content_type), tag.text});
++    }
++    myInterface.onDLPlus(tags, dl.dl_plus_ir, dl.dl_plus_it);
+     if (dl.raw.empty()) {
+         myInterface.onNewDynamicLabel("");
+     }
+diff --git a/src/backend/pad_decoder.cpp b/src/backend/pad_decoder.cpp
+index 2099fa9..a10d3af 100644
+--- a/src/backend/pad_decoder.cpp
++++ b/src/backend/pad_decoder.cpp
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "pad_decoder.h"
++#include "charsets.h"
+ 
+ 
+ // --- XPAD_CI -----------------------------------------------------------------
+@@ -289,11 +290,24 @@ size_t DGLIDecoder::GetDGLILen() {
+ }
+ 
+ 
++// DL+ extraction is character-indexed, not byte-indexed (ETSI TS 102 980).
++static std::string dlplus_utf8_substr(const std::string& text, size_t start, size_t length) {
++    size_t cp = 0, begin = text.size(), end = text.size();
++    for (size_t i = 0; i < text.size(); ++i) {
++        if ((static_cast<unsigned char>(text[i]) & 0xc0) == 0x80) continue;
++        if (cp == start) begin = i;
++        if (cp == start + length) {end = i; break;}
++        ++cp;
++    }
++    return begin < text.size() ? text.substr(begin, end - begin) : std::string();
++}
++
+ // --- DynamicLabelDecoder -----------------------------------------------------------------
+ void DynamicLabelDecoder::Reset() {
+ 	DataGroup::Reset();
+ 
+ 	dl_sr.Reset();
++	dl_plus_sr.Reset();
+ 	label.Reset();
+ }
+ 
+@@ -302,6 +316,7 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
+ 
+ 	size_t field_len = 0;
+ 	bool cmd_remove_label = false;
++	bool cmd_dl_plus = false;
+ 
+ 	// handle command/segment
+ 	if(command) {
+@@ -309,6 +324,10 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
+ 		case 0x01:	// remove label
+ 			cmd_remove_label = true;
+ 			break;
++		case 0x02:	// DL Plus
++			cmd_dl_plus = true;
++			field_len = (dg_raw[1] & 0x0F) + 1;
++			break;
+ 		default:
+ 			// ignore command
+ 			DataGroup::Reset();
+@@ -331,6 +350,7 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
+ 
+ 	// on Remove Label command, display empty label
+ 	if(cmd_remove_label) {
++		DataGroup::Reset();
+ 		label.Reset();
+ 		return true;
+ 	}
+@@ -340,20 +360,112 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
+ 	memcpy(dl_seg.prefix, &dg_raw[0], 2);
+ 	dl_seg.chars.insert(dl_seg.chars.begin(), dg_raw.begin() + 2, dg_raw.begin() + 2 + field_len);
+ 
++	bool current_flag = cmd_dl_plus ? dl_seg.DLPlusLink() : dl_seg.Toggle();
++	bool dl_toggle;
++	bool dl_plus_link;
++
++	// reset affected reassemblers upon different relevant (toggle or DL Plus link) flag value
++	if(dl_sr.GetToggle(dl_toggle) && dl_toggle != current_flag)
++		dl_sr.Reset();
++	if(dl_plus_sr.GetDLPlusLink(dl_plus_link) && dl_plus_link != current_flag)
++		dl_plus_sr.Reset();
++
+ 	DataGroup::Reset();
+ 
+-//	fprintf(stderr, "DynamicLabelDecoder: segnum %d, toggle: %s, chars_len: %2d%s\n", dl_seg.SegNum(), dl_seg.Toggle() ? "Y" : "N", dl_seg.chars.size(), dl_seg.Last() ? " [LAST]" : "");
++//	fprintf(stderr, "DynamicLabelDecoder: segnum %d, toggle: %s, DL Plus: %s, chars_len: %2zu%s\n",
++//			dl_seg.SegNum(), dl_seg.Toggle() ? "Y" : "N", cmd_dl_plus ? "Y" : "N", dl_seg.chars.size(), dl_seg.Last() ? " [LAST]" : "");
+ 
+-	// try to add segment
+-	if(!dl_sr.AddSegment(dl_seg))
+-		return false;
++	if(cmd_dl_plus) {
++		// try to add segment
++		if(!dl_plus_sr.AddSegment(dl_seg))
++			return false;
++
++		// ensure DL is already completed
++		if(!dl_sr.CheckForCompleteLabel())
++			return false;
++	} else {
++		// try to add segment
++		if(!dl_sr.AddSegment(dl_seg))
++			return false;
++	}
+ 
+ 	// append new label
++	label.Reset();
+ 	label.raw = dl_sr.label_raw;
+ 	label.charset = dl_sr.dl_segs[0].prefix[1] >> 4;
++
++	// if completed, append also DL Plus
++	if(dl_plus_sr.CheckForCompleteLabel())
++		AppendDLPlus();
++
+ 	return true;
+ }
+ 
++void DynamicLabelDecoder::AppendDLPlus() {
++	std::vector<uint8_t>& dl_plus_cmd = dl_plus_sr.label_raw;
++
++	// abort, if not DL Plus tags command
++	if(dl_plus_cmd.empty() || (dl_plus_cmd[0] >> 4) != 0)
++		return;
++
++//	fprintf(stderr, "### decoded DL Plus ###\n");
++
++	label.dl_plus_it = dl_plus_cmd[0] & 0x08;
++	label.dl_plus_ir = dl_plus_cmd[0] & 0x04;
++	size_t nt = dl_plus_cmd[0] & 0x03;
++	if (dl_plus_cmd.size() < 1 + (nt + 1) * 3 || label.raw.empty()) return;
++
++	// retrieve DL text
++	std::string label_text = toUtf8StringUsingCharset(label.raw.data(), (CharacterSet)label.charset, label.raw.size());
++
++//	bool link_bit = false;
++//	fprintf(stderr, "  Link: %s, Item Toggle: %s, Item Running: %s\n",
++//			dl_plus_sr.GetDLPlusLink(link_bit) ? (link_bit ? "Y" : "N") : "-", label.dl_plus_it ? "Y" : "N", label.dl_plus_ir ? "Y" : "N");
++
++	// process tags
++	for(size_t i = 0; i < (nt + 1); i++) {
++		uint8_t* dl_plus_tag = &dl_plus_cmd[1 + i * 3];
++
++		int content_type = dl_plus_tag[0] & 0x7F;
++		size_t start_marker = dl_plus_tag[1] & 0x7F;
++		size_t length_marker = dl_plus_tag[2] & 0x7F;
++
++		// extract object text from DL text
++		std::string text;
++		if(content_type != 0) {
++			text = dlplus_utf8_substr(label_text, start_marker, length_marker + 1);
++//			fprintf(stderr, "  content_type: %-25s, start marker: %2zu, length marker: %2zu, '%s'\n",
++//					ConvertDLPlusContentTypeToString(content_type).c_str(), start_marker, length_marker, text.c_str());
++		} else {
++//			fprintf(stderr, "  DUMMY\n");
++		}
++
++		// store object
++		label.dl_plus_objects.push_back(DL_PLUS_OBJECT(content_type, text));
++	}
++}
++
++const char* DynamicLabelDecoder::dl_plus_content_types[] = {
++	"DUMMY",
++	"ITEM.TITLE", "ITEM.ALBUM", "ITEM.TRACKNUMBER", "ITEM.ARTIST", "ITEM.COMPOSITION", "ITEM.MOVEMENT", "ITEM.CONDUCTOR", "ITEM.COMPOSER", "ITEM.BAND", "ITEM.COMMENT", "ITEM.GENRE",
++	"INFO.NEWS", "INFO.NEWS.LOCAL", "INFO.STOCKMARKET", "INFO.SPORT", "INFO.LOTTERY", "INFO.HOROSCOPE", "INFO.DAILY_DIVERSION", "INFO.HEALTH", "INFO.EVENT", "INFO.SCENE", "INFO.CINEMA", "INFO.TV", "INFO.DATE_TIME", "INFO.WEATHER", "INFO.TRAFFIC", "INFO.ALARM", "INFO.ADVERTISEMENT", "INFO.URL", "INFO.OTHER",
++	"STATIONNAME.SHORT", "STATIONNAME.LONG",
++	"PROGRAMME.NOW", "PROGRAMME.NEXT", "PROGRAMME.PART", "PROGRAMME.HOST", "PROGRAMME.EDITORIAL_STAFF", "PROGRAMME.FREQUENCY", "PROGRAMME.HOMEPAGE", "PROGRAMME.SUBCHANNEL",
++	"PHONE.HOTLINE", "PHONE.STUDIO", "PHONE.OTHER",
++	"SMS.STUDIO", "SMS.OTHER",
++	"EMAIL.HOTLINE", "EMAIL.STUDIO", "EMAIL.OTHER",
++	"MMS.OTHER",
++	"CHAT", "CHAT.CENTER",
++	"VOTE.QUESTION", "VOTE.CENTRE",
++	"(reserved)", "(reserved)",
++	"(private class)", "(private class)", "(private class)",
++	"DESCRIPTOR.PLACE", "DESCRIPTOR.APPOINTMENT", "DESCRIPTOR.IDENTIFIER", "DESCRIPTOR.PURCHASE", "DESCRIPTOR.GET_DATA"
++};
++
++std::string DynamicLabelDecoder::ConvertDLPlusContentTypeToString(const int value) {
++	return value < 64 ? dl_plus_content_types[value] : "(reserved)";
++}
++
+ 
+ // --- DL_SEG_REASSEMBLER -----------------------------------------------------------------
+ void DL_SEG_REASSEMBLER::Reset() {
+@@ -362,16 +474,13 @@ void DL_SEG_REASSEMBLER::Reset() {
+ }
+ 
+ bool DL_SEG_REASSEMBLER::AddSegment(DL_SEG &dl_seg) {
+-	dl_segs_t::const_iterator it;
+-
+ 	// if there are already segments with other toggle value in cache, first clear it
+-	it = dl_segs.cbegin();
+-	if(it != dl_segs.cend() && it->second.Toggle() != dl_seg.Toggle())
++	bool current_toggle;
++	if(GetToggle(current_toggle) && current_toggle != dl_seg.Toggle())
+ 		dl_segs.clear();
+ 
+ 	// if the segment is already there, abort
+-	it = dl_segs.find(dl_seg.SegNum());
+-	if(it != dl_segs.cend())
++	if(dl_segs.find(dl_seg.SegNum()) != dl_segs.end())
+ 		return false;
+ 
+ 	// add segment
+@@ -381,6 +490,20 @@ bool DL_SEG_REASSEMBLER::AddSegment(DL_SEG &dl_seg) {
+ 	return CheckForCompleteLabel();
+ }
+ 
++bool DL_SEG_REASSEMBLER::GetToggle(bool& result) {
++	if(dl_segs.empty())
++		return false;
++	result = dl_segs.cbegin()->second.Toggle();
++	return true;
++}
++
++bool DL_SEG_REASSEMBLER::GetDLPlusLink(bool& result) {
++	if(dl_segs.empty())
++		return false;
++	result = dl_segs.cbegin()->second.DLPlusLink();
++	return true;
++}
++
+ bool DL_SEG_REASSEMBLER::CheckForCompleteLabel() {
+ 	dl_segs_t::const_iterator it;
+ 
+diff --git a/src/backend/pad_decoder.h b/src/backend/pad_decoder.h
+index 4423f17..9e8ffb2 100644
+--- a/src/backend/pad_decoder.h
++++ b/src/backend/pad_decoder.h
+@@ -37,6 +37,7 @@ struct DL_SEG {
+ 	uint8_t prefix[2];
+ 	std::vector<uint8_t> chars;
+ 
++	bool DLPlusLink() const {return prefix[1] & 0x80;}
+ 	bool Toggle() const {return prefix[0] & 0x80;}
+ 	bool First() const {return prefix[0] & 0x40;}
+ 	bool Last() const {return prefix[0] & 0x20;}
+@@ -90,18 +91,43 @@ struct DL_SEG_REASSEMBLER {
+ 	bool AddSegment(DL_SEG &dl_seg);
+ 	bool CheckForCompleteLabel();
+ 	void Reset();
++
++	bool GetToggle(bool& result);
++	bool GetDLPlusLink(bool& result);
++};
++
++
++// --- DL_PLUS_OBJECT -----------------------------------------------------------------
++struct DL_PLUS_OBJECT {
++	int content_type;
++	std::string text;
++
++	DL_PLUS_OBJECT() : content_type(0) {}    // = DUMMY
++	DL_PLUS_OBJECT(int content_type, std::string text) :
++        content_type(content_type),
++        text(text)
++    {}
+ };
+ 
++typedef std::vector<DL_PLUS_OBJECT> dl_plus_objects_t;
+ 
+ // --- DL_STATE -----------------------------------------------------------------
+ struct DL_STATE {
+ 	std::vector<uint8_t> raw;
+ 	int charset;
+ 
++	bool dl_plus_it;
++	bool dl_plus_ir;
++	dl_plus_objects_t dl_plus_objects;
++
+ 	DL_STATE() {Reset();}
+ 	void Reset() {
+ 		raw.clear();
+ 		charset = -1;
++
++		dl_plus_it = false;
++		dl_plus_ir = false;
++		dl_plus_objects.clear();
+ 	}
+ };
+ 
+@@ -110,16 +136,22 @@ struct DL_STATE {
+ class DynamicLabelDecoder : public DataGroup {
+ private:
+ 	DL_SEG_REASSEMBLER dl_sr;
++	DL_SEG_REASSEMBLER dl_plus_sr;
+ 	DL_STATE label;
+ 
+ 	size_t GetInitialNeededSize() {return 2 + CalcCRC::CRCLen;}	// at least prefix + CRC
+ 	bool DecodeDataGroup();
++	void AppendDLPlus();
++
++	static const char* dl_plus_content_types[];
+ public:
+ 	DynamicLabelDecoder() : DataGroup(2 + 16 + CalcCRC::CRCLen) {Reset();}
+ 
+ 	void Reset();
+ 
+ 	DL_STATE GetLabel() {return label;}
++
++	static std::string ConvertDLPlusContentTypeToString(const int value);
+ };
+ 
+ 
+diff --git a/src/backend/radio-controller.h b/src/backend/radio-controller.h
+index 22be22d..eea82d4 100644
+--- a/src/backend/radio-controller.h
++++ b/src/backend/radio-controller.h
+@@ -139,6 +139,8 @@ class RadioControllerInterface {
+ 
+ /* A Programme Handler is associated to each tuned programme in the ensemble.
+  */
++struct DLPlusTag { int content_type; std::string name; std::string text; };
++
+ class ProgrammeHandlerInterface {
+     public:
+         virtual ~ProgrammeHandlerInterface() { }
+@@ -165,6 +167,7 @@ class ProgrammeHandlerInterface {
+         /* A new Dynamic Label was decoded.
+          * label is utf-8 encoded. */
+         virtual void onNewDynamicLabel(const std::string& label) = 0;
++        virtual void onDLPlus(const std::vector<DLPlusTag>&, bool, bool) {}
+ 
+         /* A slide was decoded. data contains the raw bytes, and subtype
+          * defines the data format:
+diff --git a/src/welle-cli/jsonconvert.cpp b/src/welle-cli/jsonconvert.cpp
+index 95a2afb..4fa239a 100644
+--- a/src/welle-cli/jsonconvert.cpp
++++ b/src/welle-cli/jsonconvert.cpp
+@@ -143,6 +143,12 @@ static void to_json(nlohmann::json& j, const ServiceJson& s) {
+             {"aacerrors", s.errorcounters_aacerrors},
+             {"time", s.errorcounters_time}}}};
+ 
++    nlohmann::json tags = nlohmann::json::array();
++    for (const auto& tag : s.dlplus) {
++        tags.push_back({{"type", tag.content_type}, {"name", tag.name}, {"text", tag.text}});
++    }
++    j["dlplus"] = {{"tags", tags}, {"item_running", s.dlplus_running}, {"item_toggle", s.dlplus_toggle}, {"available", !s.dlplus.empty()}};
++
+     if (s.xpaderror_haserror) {
+         j["xpaderror"] = nlohmann::json{
+             {"haserror", s.xpaderror_haserror},
+diff --git a/src/welle-cli/jsonconvert.h b/src/welle-cli/jsonconvert.h
+index 8f7ff48..595e78a 100644
+--- a/src/welle-cli/jsonconvert.h
++++ b/src/welle-cli/jsonconvert.h
+@@ -93,6 +93,9 @@ struct ServiceJson {
+     std::time_t mot_time = 0;
+     std::time_t mot_lastchange = 0;
+ 
++    std::vector<DLPlusTag> dlplus;
++    bool dlplus_running = false;
++    bool dlplus_toggle = false;
+     std::string dls_label;
+     std::time_t dls_time = 0;
+     std::time_t dls_lastchange = 0;
+diff --git a/src/welle-cli/webprogrammehandler.cpp b/src/welle-cli/webprogrammehandler.cpp
+index 60b7c47..d2fedb8 100644
+--- a/src/welle-cli/webprogrammehandler.cpp
++++ b/src/welle-cli/webprogrammehandler.cpp
+@@ -275,6 +275,9 @@ WebProgrammeHandler::dls_t WebProgrammeHandler::getDLS() const
+     dls_t dls;
+ 
+     std::unique_lock<std::mutex> lock(stats_mutex);
++    dls.dlplus = last_dlplus;
++    dls.item_running = dlplus_running;
++    dls.item_toggle = dlplus_toggle;
+     if (last_label_valid) {
+         dls.label = last_label;
+         dls.time = time_label;
+@@ -417,6 +420,14 @@ void WebProgrammeHandler::onNewDynamicLabel(const string& label)
+     last_label = label;
+ }
+ 
++void WebProgrammeHandler::onDLPlus(const std::vector<DLPlusTag>& tags, bool running, bool toggle)
++{
++    std::lock_guard<std::mutex> lock(stats_mutex);
++    last_dlplus = tags;
++    dlplus_running = running;
++    dlplus_toggle = toggle;
++}
++
+ void WebProgrammeHandler::onMOT(const mot_file_t& mot_file)
+ {
+     std::unique_lock<std::mutex> lock(stats_mutex);
+diff --git a/src/welle-cli/webprogrammehandler.h b/src/welle-cli/webprogrammehandler.h
+index 6f226da..28c4f6b 100644
+--- a/src/welle-cli/webprogrammehandler.h
++++ b/src/welle-cli/webprogrammehandler.h
+@@ -97,6 +97,9 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
+         std::chrono::time_point<std::chrono::system_clock> time_label;
+         std::chrono::time_point<std::chrono::system_clock> time_label_change;
+         std::string last_label;
++        std::vector<DLPlusTag> last_dlplus;
++        bool dlplus_running = false;
++        bool dlplus_toggle = false;
+ 
+         bool last_mot_valid = false;
+         std::chrono::time_point<std::chrono::system_clock> time_mot;
+@@ -124,6 +127,9 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
+ 
+         struct dls_t {
+             std::string label;
++            std::vector<DLPlusTag> dlplus;
++            bool item_running = false;
++            bool item_toggle = false;
+             std::chrono::time_point<std::chrono::system_clock> time;
+             std::chrono::time_point<std::chrono::system_clock> last_changed; };
+         dls_t getDLS() const;
+@@ -145,6 +151,7 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
+         virtual void onRsErrors(bool uncorrectedErrors, int numCorrectedErrors) override;
+         virtual void onAacErrors(int aacErrors) override;
+         virtual void onNewDynamicLabel(const std::string& label) override;
++        void onDLPlus(const std::vector<DLPlusTag>& tags, bool running, bool toggle) override;
+         virtual void onMOT(const mot_file_t& mot_file) override;
+         virtual void onPADLengthError(size_t announced_xpad_len, size_t xpad_len) override;
+ };
+diff --git a/src/welle-cli/webradiointerface.cpp b/src/welle-cli/webradiointerface.cpp
+index 3582fa4..def611a 100644
+--- a/src/welle-cli/webradiointerface.cpp
++++ b/src/welle-cli/webradiointerface.cpp
+@@ -724,6 +724,9 @@ bool WebRadioInterface::send_mux_json(Socket& s)
+                 service.mot_lastchange = chrono::system_clock::to_time_t(mot.last_changed);
+ 
+                 auto dls = wph.getDLS();
++                service.dlplus = dls.dlplus;
++                service.dlplus_running = dls.item_running;
++                service.dlplus_toggle = dls.item_toggle;
+                 service.dls_label = dls.label;
+                 service.dls_time = chrono::system_clock::to_time_t(dls.time);
+                 service.dls_lastchange = chrono::system_clock::to_time_t(mot.last_changed);

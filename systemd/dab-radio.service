@@ -1,0 +1,24 @@
+[Unit]
+Description=DAB Radio FastAPI backend and managed receiver
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=aieat
+Group=aieat
+SupplementaryGroups=dialout plugdev
+WorkingDirectory=/home/aieat/dab-radio
+Environment=PYTHONUNBUFFERED=1
+Environment=DAB_MANAGE_RECEIVER=true
+Environment=DAB_WELLE_CLI=/home/aieat/dab-radio/build/welle/welle-cli
+ExecStart=/home/aieat/dab-radio/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8090 --no-access-log
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+Nice=-5
+CPUWeight=200
+
+[Install]
+WantedBy=multi-user.target

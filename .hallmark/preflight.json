@@ -1,0 +1,15 @@
+{
+  "scanned_at": "2026-10-25",
+  "framework": "vanilla HTML, CSS, and JavaScript",
+  "font_stack": "none present before this build",
+  "palette": "none present before this build",
+  "motion": "motion-cut; no animation library present",
+  "spacing": "none present before this build",
+  "preserve": [],
+  "introduce": [
+    "Winamp-inspired Workbench structure",
+    "dark charcoal and signal-lime/amber token system",
+    "accessible controls and responsive layout",
+    "real Web Audio processing and spectrum analysis"
+  ]
+}

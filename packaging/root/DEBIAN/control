@@ -1,0 +1,10 @@
+Package: dab-radio
+Version: 0.1.0
+Section: sound
+Priority: optional
+Architecture: arm64
+Depends: python3 (>= 3.13), python3 (<< 3.14), passwd, udev, init-system-helpers
+Homepage: https://github.com/AieatAssam/dab-radio
+Maintainer: DAB Radio maintainers <noreply@github.com>
+Description: DAB/DAB+ network audio player for RTL-SDR
+ Provides a web audio player and radio text using welle-cli and an RTL-SDR tuner.

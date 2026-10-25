@@ -1,0 +1,119 @@
+name: Build and release packages
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Debian 13 / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      DAB_BUILD_JOBS: '2'
+    steps:
+      - name: Install build tools and native libraries
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git build-essential cmake pkg-config python3 python3-pip python3-venv nodejs dpkg-dev xxd libasound2-dev libfaad-dev libmpg123-dev libfftw3-dev librtlsdr-dev libmp3lame-dev
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Determine package version
+        id: version
+        shell: bash
+        run: |
+          base="$(cat VERSION)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ "$version" != "$base" ]]; then
+              echo 'Release tag must match VERSION.' >&2
+              exit 1
+            fi
+          else
+            version="${base}~dev.${GITHUB_SHA:0:8}"
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Install test dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+      - name: Test application and validate scripts
+        shell: bash
+        run: |
+          .venv/bin/python -m pytest -q
+          for source in web/*.js; do node --check "$source"; done
+          bash -n scripts/*.sh
+      - name: Build decoder and test native DL+
+        run: ./scripts/build-decoder.sh
+      - name: Build installable package and corresponding decoder source
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_ARCH: ${{ matrix.arch }}
+        run: ./scripts/build-package.sh "$PACKAGE_VERSION" "$PACKAGE_ARCH"
+      - name: Smoke-test extracted package without SDR hardware
+        shell: bash
+        run: |
+          for package in dist/*.deb; do ./scripts/smoke-package.sh "$package"; done
+      - name: Verify installation and removal in isolated container
+        shell: bash
+        run: |
+          apt-get install -y ./dist/*.deb
+          test "$(stat -c %U /var/lib/dab-radio)" = dab-radio
+          runuser -u dab-radio -- env PYTHONPATH=/opt/dab-radio/python:/opt/dab-radio DAB_DATA_DIR=/var/lib/dab-radio DAB_MANAGE_RECEIVER=0 python3 -c 'import app; assert str(app.DATA_DIR) == "/var/lib/dab-radio"'
+          dpkg --remove dab-radio
+          test -d /var/lib/dab-radio
+      - name: Upload packages and source
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: debian-trixie-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: debian-trixie-*
+          merge-multiple: true
+          path: dist
+      - name: Publish packages, source and checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          sha256sum -- *.deb *.tar.gz > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" ./*.deb ./*.tar.gz SHA256SUMS --verify-tag --title "DAB Radio ${GITHUB_REF_NAME#v}" --generate-notes --latest

@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+if ! getent group plugdev >/dev/null; then
+	groupadd --system plugdev
+fi
+if ! getent group dab-radio >/dev/null; then
+	groupadd --system dab-radio
+fi
+if ! getent passwd dab-radio >/dev/null; then
+	useradd --system --gid dab-radio --groups plugdev --home-dir /var/lib/dab-radio \
+		--no-create-home --shell /usr/sbin/nologin dab-radio
+else
+	usermod --append --groups plugdev dab-radio
+fi
+install -d -o dab-radio -g dab-radio -m 0750 /var/lib/dab-radio
+
+if command -v udevadm >/dev/null 2>&1; then
+	udevadm control --reload-rules || true
+	udevadm trigger --subsystem-match=usb --attr-match=idVendor=0bda --attr-match=idProduct=2838 || true
+	udevadm trigger --subsystem-match=usb --attr-match=idVendor=0bda --attr-match=idProduct=2832 || true
+fi
+
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload || true
+	deb-systemd-helper unmask dab-radio.service >/dev/null || true
+	deb-systemd-helper enable dab-radio.service >/dev/null || true
+	if [ -n "${2:-}" ]; then
+		deb-systemd-invoke restart dab-radio.service >/dev/null || true
+	else
+		deb-systemd-invoke start dab-radio.service >/dev/null || true
+	fi
+fi
+
+exit 0

@@ -1,0 +1,29 @@
+[Unit]
+Description=DAB Radio web player and RTL-SDR receiver
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=dab-radio
+Group=dab-radio
+SupplementaryGroups=plugdev
+WorkingDirectory=/opt/dab-radio
+StateDirectory=dab-radio
+StateDirectoryMode=0750
+EnvironmentFile=-/etc/dab-radio/dab-radio.conf
+Environment=PYTHONUNBUFFERED=1
+Environment=DAB_MANAGE_RECEIVER=true
+Environment=DAB_DATA_DIR=/var/lib/dab-radio
+Environment=PYTHONPATH=/opt/dab-radio/python
+Environment=DAB_WELLE_CLI=/opt/dab-radio/bin/welle-cli
+ExecStart=/usr/bin/python3 -m uvicorn app:app --host 0.0.0.0 --port ${DAB_PORT} --no-access-log
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+Nice=-5
+CPUWeight=200
+
+[Install]
+WantedBy=multi-user.target

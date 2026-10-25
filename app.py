@@ -27,7 +27,9 @@ from metadata import dlplus_fields
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
-DATA_DIR = BASE_DIR / "data"
+VERSION_FILE = BASE_DIR / "VERSION"
+APP_VERSION = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.is_file() else "0.1.0"
+DATA_DIR = Path(os.environ.get("DAB_DATA_DIR", str(BASE_DIR / "data")))
 STATIONS_FILE = DATA_DIR / "stations.json"
 LOG_FILE = DATA_DIR / "receiver.log"
 TOKENS_FILE = BASE_DIR / "tokens.css"
@@ -824,7 +826,7 @@ async def lifespan(_: FastAPI):
         await receiver.close()
 
 
-app = FastAPI(title="DAB Radio", version="1.0", lifespan=lifespan)
+app = FastAPI(title="DAB Radio", version=APP_VERSION, lifespan=lifespan)
 
 
 @app.get("/api/state")

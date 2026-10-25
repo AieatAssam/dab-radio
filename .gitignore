@@ -13,3 +13,5 @@ htmlcov/
 /build/
 
 /backups/
+
+/dist/

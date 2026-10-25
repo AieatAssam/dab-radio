@@ -1,0 +1,6 @@
+# Runtime only. Release packages vendor these wheels at build time.
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+defusedxml==0.7.1
+dnspython==2.9.0

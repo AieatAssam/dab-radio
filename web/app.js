@@ -1313,6 +1313,15 @@
     const launch = $("#mini-player-button");
     const feedback = $("#mini-player-feedback");
     if (!window.DABMiniPlayer) { launch.hidden = true; return; }
+    if (!window.isSecureContext) {
+      launch.disabled = true;
+      launch.title = "Mini player requires HTTPS or localhost";
+      launch.setAttribute("aria-label", launch.title);
+      return;
+    }
+    launch.disabled = false;
+    launch.title = "Open mini player";
+    launch.setAttribute("aria-label", launch.title);
     const fail = (message) => { feedback.textContent = message; feedback.hidden = !message; };
     miniPlayer = window.DABMiniPlayer.create({
       snapshot: miniSnapshot,
